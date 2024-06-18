@@ -37,16 +37,6 @@ export default function Zupass(props: {
       throw new Error("Unexpected result type");
     }
 
-    const authResult = await authenticate(result.pcdStr, "12345", [
-      ...ESMERALDA_TICKET,
-    ]);
-
-    if (!authResult.claim.partialTicket.attendeeSemaphoreId) {
-      throw new Error("No attendeeSemaphoreId in ticket");
-    }
-
-    console.log("Auth result: ", authResult);
-
     const features = polylineFeatures(activities);
 
     const base64_image = await base64Map({
@@ -56,7 +46,7 @@ export default function Zupass(props: {
     });
 
     const payload = {
-      pcd: authResult,
+      credential: result.pcdStr,
       base64_image: base64_image,
       strava_id: athlete.id,
     };

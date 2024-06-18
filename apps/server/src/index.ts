@@ -4,7 +4,6 @@ import dotenv from "dotenv";
 import cors from "cors";
 import crypto from "crypto";
 import {
-  getActivitySegmentsByUserId,
   getAllActivitySegments,
   getAllScores,
   getDB,
@@ -16,14 +15,13 @@ import {
   insertUser,
   updateUserScore,
 } from "./db";
-import { AuthResponse, PodUserDB, UserDB, UserWithScore } from "./types";
+import { AuthResponse, PodUserDB, UserDB } from "./types";
 import {
   ZKEdDSAEventTicketPCD,
   ZKEdDSAEventTicketPCDPackage,
 } from "@pcd/zk-eddsa-event-ticket-pcd";
 import {
   calculateAllScores,
-  calculateUserScore,
   getTotalScore,
   metersToKilometers,
   refreshUserActivities,
@@ -38,8 +36,8 @@ import {
   verifyCredential,
 } from "@pcd/passport-interface";
 import { SerializedPCD } from "@pcd/pcd-types";
-import { SemaphoreSignaturePCDPackage } from "@pcd/semaphore-signature-pcd";
 import { FeedRegistration } from "./feed";
+import { ESMERALDA_TICKET, authenticate } from "@pcd/zuauth";
 
 dotenv.config();
 
@@ -241,41 +239,44 @@ const main = async () => {
   // link a semaphore ID with a strava ID, then create+save POD
   app.post("/issue", async (req, res) => {
     var inputs: {
-      pcd: ZKEdDSAEventTicketPCD;
+      credential: string;
       strava_id: string;
       base64_image: string;
     } = req.body;
 
-    const user: UserDB | undefined = await getUserById(pool, inputs.strava_id);
-
-    if (!user) {
-      res.status(400).json({ error: "User not found" });
-      return;
-    }
-
-    // make sure score is up to date before we issue
     try {
+      const authResult = await authenticate(inputs.credential, "12345", [
+        ...ESMERALDA_TICKET,
+      ]);
+
+      const verified = await ZKEdDSAEventTicketPCDPackage.verify(authResult);
+
+      if (!verified) {
+        throw new Error("Couldn't verify PCD");
+      }
+
+      const semaphore_id = authResult.claim.partialTicket.attendeeSemaphoreId;
+      if (!semaphore_id) {
+        throw new Error("No semaphore id");
+      }
+
+      const user: UserDB | undefined = await getUserById(
+        pool,
+        inputs.strava_id
+      );
+
+      if (!user) throw new Error("User not found");
+
+      // make sure score is up to date before we issue
       const updatedActivities = await refreshUserActivities(pool, user);
       await runAlgoOnActivities(pool, updatedActivities, user.id);
       const score = await updateScore(pool, user.id);
-      const totalScore = getTotalScore();
 
       if (score === undefined) {
-        res.status(500).send("Error processing user info, no score found");
-        return;
+        throw new Error("Error processing user info, no score found");
       }
 
-      const verified = await ZKEdDSAEventTicketPCDPackage.verify(inputs.pcd);
-      if (!verified) {
-        res.status(500).json({ error: "Couldn't verify PCD" });
-        return;
-      }
-
-      const semaphore_id = inputs.pcd.claim.partialTicket.attendeeSemaphoreId;
-      if (!semaphore_id) {
-        res.status(500).json({ error: "No semaphore id" });
-        return;
-      }
+      const totalScore = getTotalScore();
 
       const cleanScore = metersToKilometers(score);
       const percentage = ((score * 100) / totalScore).toFixed(1);
@@ -303,7 +304,7 @@ const main = async () => {
       const serialized = await PODPCDPackage.serialize(newPOD);
       console.log("Serialized pod: ", serialized);
 
-      const pod = await insertPod(pool, {
+      await insertPod(pool, {
         semaphore_id: semaphore_id,
         strava_id: inputs.strava_id,
         proof: JSON.stringify(serialized),
