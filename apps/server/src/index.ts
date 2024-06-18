@@ -35,6 +35,7 @@ import { PODPCD, PODPCDPackage } from "@pcd/pod-pcd";
 import {
   PollFeedRequest,
   PollFeedResponseValue,
+  verifyCredential,
 } from "@pcd/passport-interface";
 import { SerializedPCD } from "@pcd/pcd-types";
 import { SemaphoreSignaturePCDPackage } from "@pcd/semaphore-signature-pcd";
@@ -198,39 +199,43 @@ const main = async () => {
 
   app.post("/feeds", async (req, res) => {
     const request: PollFeedRequest = req.body;
-    const sig = await SemaphoreSignaturePCDPackage.deserialize(
-      request.pcd!.pcd
-    );
 
-    const pod: PodUserDB | undefined = await getPodBySemaphoreId(
-      pool,
-      sig.claim.identityCommitment
-    );
+    try {
+      const verifiedCredential = await verifyCredential(request.pcd!);
+      const pod: PodUserDB | undefined = await getPodBySemaphoreId(
+        pool,
+        verifiedCredential.semaphoreId
+      );
 
-    if (!pod) {
-      res.status(400).json({ error: "Pod for semaphore ID not found" });
+      if (!pod) {
+        res.status(400).json({ error: "Pod for semaphore ID not found" });
+        return;
+      }
+
+      const data = pod.proof as unknown as SerializedPCD;
+
+      var result: PollFeedResponseValue = {
+        actions: [],
+      };
+
+      result.actions.push({
+        folder: "Zuum",
+        type: "DeleteFolder_action",
+        recursive: false,
+      });
+
+      result.actions.push({
+        folder: "Zuum",
+        type: "AppendToFolder_action",
+        pcds: [data],
+      });
+
+      res.status(200).json(result);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ error: `Couldn't verify credential: ${e}` });
       return;
     }
-
-    const data = pod.proof as unknown as SerializedPCD;
-
-    var result: PollFeedResponseValue = {
-      actions: [],
-    };
-
-    result.actions.push({
-      folder: "Zuum",
-      type: "DeleteFolder_action",
-      recursive: false,
-    });
-
-    result.actions.push({
-      folder: "Zuum",
-      type: "AppendToFolder_action",
-      pcds: [data],
-    });
-
-    res.status(200).json(result);
   });
 
   // link a semaphore ID with a strava ID, then create+save POD
