@@ -1,4 +1,4 @@
-import { ESMERALDA_TICKET, authenticate, zuAuthPopup } from "@pcd/zuauth";
+import { ESMERALDA_TICKET, zuAuthPopup } from "@pcd/zuauth";
 import Button from "./common/Button";
 import Spacer from "./common/Spacer";
 import Header from "./common/Header";
